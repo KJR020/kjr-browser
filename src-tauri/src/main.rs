@@ -99,6 +99,31 @@ fn main() {
                 LogicalSize::new(logical.width, (logical.height - TOOLBAR_HEIGHT).max(0.0)),
             )?;
 
+            // Linux (webkit2gtk) では子 WebView はウィンドウの GtkBox に
+            // pack_start(expand=true) で追加され、add_child の位置・サイズ指定や
+            // set_bounds は無視される (均等分割になる)。そのため GtkBox の
+            // レイアウトに乗り、ツールバー側だけ高さ固定・expand 無効にする。
+            // こうするとリサイズ時の再配分も GTK が自動で行う。
+            #[cfg(target_os = "linux")]
+            toolbar.with_webview(|platform_webview| {
+                use gtk::prelude::*;
+                let widget = platform_webview.inner();
+                widget.set_size_request(-1, TOOLBAR_HEIGHT as i32);
+                if let Some(parent) = widget.parent() {
+                    if let Ok(gtk_box) = parent.dynamic_cast::<gtk::Box>() {
+                        gtk_box.set_child_packing(
+                            &widget,
+                            false,
+                            true,
+                            0,
+                            gtk::PackType::Start,
+                        );
+                    }
+                }
+            })?;
+
+            // Windows / macOS では子 WebView の位置・サイズ指定が有効なので、
+            // リサイズ時に手動で追従させる (Linux では no-op)
             let win = window.clone();
             window.on_window_event(move |event| {
                 if let WindowEvent::Resized(size) = event {

@@ -13,6 +13,11 @@ tauri = { version = "2", features = ["unstable"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
+# Linux では子 WebView が GtkBox に均等分割で詰められるため、
+# ツールバーの高さを GTK レベルで固定する必要がある (main.rs 参照)
+[target."cfg(target_os = \"linux\")".dependencies]
+gtk = "0.18"
+
 [profile.release]
 codegen-units = 1
 lto = true
