@@ -1,68 +1,83 @@
 # kjr-browser
 
-Rust で作る学習用トイブラウザ。
+Tauri で作る軽量ブラウザ。
 
-ブラウザが URL を受け取ってからピクセルを画面に描くまでの全工程を、自分の手で実装しながら学ぶプロジェクト。
-
-## 目的
-
-- ブラウザエンジンの仕組みを体系的に理解する
-- HTML パース、CSS、レイアウト、描画、ネットワーク通信の各レイヤーを実装する
-- Rust の実践的なスキルを身につける
+OS 標準の WebView (Linux: webkit2gtk / macOS: WKWebView / Windows: WebView2) にレンダリングを任せ、
+タブ・アドレスバー・履歴などの「ブラウザシェル」を Rust + Tauri で実装する。
+Chromium を同梱しないため、バイナリサイズとメモリ使用量を小さく保てる。
 
 ## アーキテクチャ
 
+Tauri v2 のマルチ WebView 機能 (`unstable` フィーチャ) を使い、1 つのウィンドウに 2 つの WebView を配置する。
+
 ```
-URL
- ↓
-[Network] HTTP リクエスト → HTML バイト列
- ↓
-[HTML Parser] → DOM ツリー
- ↓                          ↗ CSS バイト列
-[CSS Parser] → CSS ルール
- ↓
-[Style Resolution] → スタイルツリー (DOM + CSS プロパティ)
- ↓
-[Layout Engine] → レイアウトツリー (ボックス, 座標, サイズ)
- ↓
-[Painting] → ディスプレイリスト (描画コマンド)
- ↓
-[Window/Renderer] → ピクセル → 画面
+┌─────────────────────────────────────────┐
+│ main ウィンドウ (tauri)                  │
+│ ┌─────────────────────────────────────┐ │
+│ │ toolbar WebView (ui/ のローカルHTML) │ │  ← 戻る/進む/更新 + アドレスバー
+│ ├─────────────────────────────────────┤ │     IPC (invoke) で Rust を呼ぶ
+│ │ content WebView (リモートURL)        │ │  ← 実際の Web ページ
+│ │                                     │ │     IPC 権限なし (サンドボックス)
+│ └─────────────────────────────────────┘ │
+└─────────────────────────────────────────┘
 ```
 
-## 技術スタック
+- ツールバーは `ui/` の素の HTML/CSS/JS (バンドラ不使用、`withGlobalTauri` で API を利用)
+- Rust 側 (`src-tauri/src/main.rs`) が `navigate` / `go_back` / `go_forward` / `reload` コマンドを提供
+- コンテンツ側のページ遷移は `url-changed` イベントでツールバーに通知され、アドレスバーが同期される
+- リモートページを表示する content WebView には capability を与えず、IPC へアクセスさせない
 
-| カテゴリ | クレート | 用途 |
-|---------|---------|------|
-| ウィンドウ | winit | クロスプラットフォームウィンドウ管理 |
-| ピクセルバッファ | softbuffer | ウィンドウへのピクセル書き込み |
-| 2D 描画 | tiny-skia | CPU ベースのラスタライズ |
-| HTTP | reqwest | HTTP/HTTPS 通信 |
+## ディレクトリ構成
 
-将来的に html5ever, cssparser 等の本格的なクレートへの差し替えも想定。
+```
+├── src-tauri/          Rust / Tauri 本体
+│   ├── src/main.rs     ウィンドウ構築・IPC コマンド
+│   ├── tauri.conf.json Tauri 設定
+│   └── capabilities/   WebView ごとの権限定義
+├── ui/                 ツールバー UI (素の HTML/CSS/JS)
+└── docs/               計画・メモ
+```
 
-## フェーズ
+## ロードマップ
 
-| Phase | テーマ | ゴール |
-|-------|-------|--------|
-| 1 | 画面に描画する | ウィンドウに矩形とテキストを表示 |
-| 2 | HTML → DOM → 画面 | HTML 文字列をパースして描画 |
-| 3 | CSS スタイル適用 | CSS でスタイルを変更できる |
-| 4 | レイアウトエンジン | ボックスモデルで要素を正しく配置 |
-| 5 | ネットワーク | URL から実際の Web ページを取得・表示 |
-| 6 | インタラクション | リンククリック、スクロール、ページ遷移 |
-
-詳細は [docs/learning-plan.md](docs/learning-plan.md) を参照。
+| Phase | テーマ | 状態 |
+|-------|-------|------|
+| 1 | MVP: アドレスバー + 単一ページ表示 + 戻る/進む/更新 | ✅ 実装済み |
+| 2 | タブ (content WebView の複数管理・切り替え) | 未着手 |
+| 3 | 履歴・ブックマークの永続化 | 未着手 |
+| 4 | ショートカットキー・ダウンロード・設定画面 | 未着手 |
+| 5 | 配布用ビルド最適化 (AppImage / dmg / msi) | 未着手 |
 
 ## ビルド・実行
 
+Linux では webkit2gtk などの開発パッケージが必要:
+
 ```bash
+sudo apt install libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev
+```
+
+実行:
+
+```bash
+cd src-tauri
 cargo run
+```
+
+テスト:
+
+```bash
+cd src-tauri
+cargo test
 ```
 
 ## 参考資料
 
-- [Let's build a browser engine!](https://limpet.net/mbrubeck/2014/08/08/toy-layout-engine-1.html) - Matt Brubeck による Rust 製トイブラウザチュートリアル
-- [Web Browser Engineering](https://browser.engineering/) - ブラウザの仕組みを体系的に解説する教科書
-- [Robinson](https://github.com/mbrubeck/robinson) - 上記チュートリアルの参考実装
-- [Servo](https://github.com/servo/servo) - Mozilla の Rust 製ブラウザエンジン
+- [Tauri v2 ドキュメント](https://v2.tauri.app/)
+- [Tauri Webview (マルチ WebView API)](https://docs.rs/tauri/latest/tauri/webview/)
+- [wry](https://github.com/tauri-apps/wry) - Tauri が内部で使う WebView ライブラリ
+
+---
+
+なお、当初はレンダリングエンジンごとフルスクラッチで実装する計画だった。
+その学習計画は [docs/learning-plan.md](docs/learning-plan.md) に残してある
+(ブラウザ内部の仕組みを学ぶ資料として有用なため)。

@@ -1,0 +1,20 @@
+[package]
+name = "kjr-browser"
+version = "0.1.0"
+description = "Tauri 製の軽量ブラウザ"
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# unstable フィーチャは 1 ウィンドウ内に複数 WebView を置く API (add_child) に必要
+tauri = { version = "2", features = ["unstable"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true

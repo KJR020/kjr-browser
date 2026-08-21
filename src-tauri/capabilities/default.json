@@ -1,0 +1,7 @@
+{
+  "identifier": "default",
+  "description": "ツールバー WebView にのみ IPC を許可する。コンテンツ WebView (リモート URL) には権限を与えない。",
+  "windows": ["main"],
+  "webviews": ["toolbar"],
+  "permissions": ["core:default"]
+}
