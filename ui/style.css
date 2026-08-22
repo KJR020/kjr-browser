@@ -12,7 +12,85 @@ body {
   background: #2b2d31;
 }
 
-#toolbar {
+/* ---- タブ列 (上段 32px) ---- */
+
+#tabbar {
+  display: flex;
+  align-items: flex-end;
+  height: 32px;
+  padding: 4px 8px 0;
+  gap: 4px;
+  background: #1e1f22;
+}
+
+#tabs {
+  display: flex;
+  gap: 4px;
+  overflow: hidden;
+}
+
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 180px;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: 8px 8px 0 0;
+  background: #2b2d31;
+  color: #9a9ea6;
+  font-size: 12px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.tab.active {
+  background: #3d4046;
+  color: #e8eaed;
+}
+
+.tab .title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tab .close {
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+  width: 16px;
+  height: 16px;
+  line-height: 16px;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.tab .close:hover {
+  background: #55585f;
+}
+
+#new-tab {
+  width: 26px;
+  height: 26px;
+  margin-bottom: 2px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #dcdee2;
+  font-size: 16px;
+  cursor: pointer;
+}
+
+#new-tab:hover {
+  background: #3d4046;
+}
+
+/* ---- ナビ列 (下段 48px) ---- */
+
+#navbar {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -20,7 +98,7 @@ body {
   padding: 0 10px;
 }
 
-button {
+#navbar button {
   width: 32px;
   height: 32px;
   border: none;
@@ -31,7 +109,7 @@ button {
   cursor: pointer;
 }
 
-button:hover {
+#navbar button:hover {
   background: #3d4046;
 }
 
