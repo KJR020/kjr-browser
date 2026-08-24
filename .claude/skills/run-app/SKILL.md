@@ -1,9 +1,16 @@
 ---
 name: run-app
-description: kjr-browser (Tauri アプリ) をヘッドレス環境の仮想ディスプレイ上で起動・操作・スクリーンショットする手順
+description: kjr-browser の GUI (engine/ のトイエンジン、src-tauri/ の Tauri シェル) をヘッドレス環境の仮想ディスプレイ上で起動・操作・スクリーンショットする手順
 ---
 
 # kjr-browser をヘッドレス環境で起動・操作する
+
+## 0. どちらを動かすか
+
+- **engine/** (本線: フルスクラッチのトイエンジン) — `cd engine && cargo build` して
+  `./target/debug/kjr-engine`。追加の実行時依存: `apt-get install -y libxkbcommon-x11-0`
+  (無いと winit が起動時に panic する)。以下の Xvfb / スクリーンショット手順は共通。
+- **src-tauri/** (シェル編: Tauri 製タブブラウザ) — 以下の手順の通り。
 
 Tauri 製 GUI アプリなので、リモートコンテナでは Xvfb (仮想ディスプレイ) 上で起動し、
 xdotool で操作、ImageMagick の `import` でスクリーンショットを撮って確認する。

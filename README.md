@@ -1,96 +1,70 @@
 # kjr-browser
 
-Tauri で作る軽量ブラウザ。
+ブラウザの仕組みを理解するために、レンダリングエンジンをフルスクラッチで作る学習プロジェクト。
 
-OS 標準の WebView (Linux: webkit2gtk / macOS: WKWebView / Windows: WebView2) にレンダリングを任せ、
-タブ・アドレスバー・履歴などの「ブラウザシェル」を Rust + Tauri で実装する。
-Chromium を同梱しないため、バイナリサイズとメモリ使用量を小さく保てる。
-
-## アーキテクチャ
-
-Tauri v2 のマルチ WebView 機能 (`unstable` フィーチャ) を使い、1 つのウィンドウに 2 つの WebView を配置する。
+URL を受け取ってからピクセルを画面に描くまでの全工程を、Rust で自分の手で実装する。
 
 ```
-┌─────────────────────────────────────────┐
-│ main ウィンドウ (tauri)                  │
-│ ┌─────────────────────────────────────┐ │
-│ │ toolbar WebView (ui/ のローカルHTML) │ │  ← タブ列 + 戻る/進む/更新 + アドレスバー
-│ ├─────────────────────────────────────┤ │     IPC (invoke) で Rust を呼ぶ
-│ │ tab-N WebView (リモートURL)          │ │  ← タブごとに 1 つの WebView。
-│ │  (アクティブなタブだけ表示)           │ │     アクティブ以外は hide()。
-│ └─────────────────────────────────────┘ │     IPC 権限なし (サンドボックス)
-└─────────────────────────────────────────┘
+URL → [Network] → HTML → [Parser] → DOM → [Style] → スタイルツリー
+    → [Layout] → レイアウトツリー → [Paint] → ディスプレイリスト → ピクセル
 ```
 
-タブの状態 (ラベル・URL・アクティブ) は Rust 側の `TabsState` が一元管理し、
-変化のたびに `tabs-changed` イベントでツールバーへ通知する。
+計画の全体像は [docs/learning-plan.md](docs/learning-plan.md) を参照。
 
-- ツールバーは `ui/` の素の HTML/CSS/JS (バンドラ不使用、`withGlobalTauri` で API を利用)
-- Rust 側 (`src-tauri/src/main.rs`) が `navigate` / `go_back` / `go_forward` / `reload` コマンドを提供
-- コンテンツ側のページ遷移は `url-changed` イベントでツールバーに通知され、アドレスバーが同期される
-- リモートページを表示する content WebView には capability を与えず、IPC へアクセスさせない
-
-## ディレクトリ構成
-
-レイヤー構成の詳細と実際のブラウザとの対応は [docs/architecture.md](docs/architecture.md) を参照。
-
-```
-├── src-tauri/               Rust / Tauri 本体
-│   ├── src/
-│   │   ├── main.rs          エントリーポイント (配線のみ)
-│   │   ├── commands.rs      IPC 境界 (UI からの invoke の受付窓口)
-│   │   ├── tabs.rs          ドメイン層 (タブの状態管理と操作)
-│   │   ├── url.rs           アドレスバー入力の解釈 (純粋ロジック + テスト)
-│   │   └── window.rs        プラットフォーム層 (ウィンドウ構築・OS 差分)
-│   ├── tauri.conf.json      Tauri 設定
-│   └── capabilities/        WebView ごとの権限定義
-├── ui/                      ツールバー UI (素の HTML/CSS/JS)
-│   ├── index.html           ツールバーの構造
-│   ├── toolbar.js           ツールバーのロジック (IPC 呼び出し)
-│   └── style.css            ツールバーの見た目
-└── docs/                    設計・計画メモ
-```
-
-## ロードマップ
+## 進捗
 
 | Phase | テーマ | 状態 |
 |-------|-------|------|
-| 1 | MVP: アドレスバー + 単一ページ表示 + 戻る/進む/更新 | ✅ 実装済み |
-| 2 | タブ (content WebView の複数管理・切り替え) | ✅ 実装済み |
-| 3 | 履歴・ブックマークの永続化 | 未着手 |
-| 4 | ショートカットキー・ダウンロード・設定画面 | 未着手 |
-| 5 | 配布用ビルド最適化 (AppImage / dmg / msi) | 未着手 |
+| 1 | 画面に描画する (ウィンドウ・矩形・テキスト) | ✅ 完了 |
+| 2 | HTML → DOM → 画面 | 未着手 |
+| 3 | CSS スタイル適用 | 未着手 |
+| 4 | レイアウトエンジン | 未着手 |
+| 5 | ネットワーク | 未着手 |
+| 6 | インタラクション | 未着手 |
+
+## ディレクトリ構成
+
+```
+├── engine/              ★ 本線: トイレンダリングエンジン
+│   └── src/
+│       ├── main.rs          イベントループとウィンドウ (Phase 1)
+│       ├── display_list.rs  描画コマンド定義 (パイプラインの中間表現)
+│       ├── paint.rs         ラスタライズ (図形 → ピクセル)
+│       └── text.rs          フォント処理 (文字 → グリフ → ピクセル)
+├── docs/
+│   ├── learning-plan.md     フェーズ別の学習計画 (本線のロードマップ)
+│   └── architecture.md      シェル編のアーキテクチャ解説
+├── src-tauri/           (シェル編・完了) Tauri 製ブラウザシェル
+└── ui/                  (シェル編・完了) そのツールバー UI
+```
+
+モジュール名はレンダリングパイプラインの工程名に揃えてある。
+Phase が進むごとに `html.rs` (パーサ)、`dom.rs`、`css.rs`、`style.rs`、`layout.rs` が
+engine/src/ に増えていき、ディレクトリ一覧がそのままパイプライン図になる。
 
 ## ビルド・実行
 
-Linux では webkit2gtk などの開発パッケージが必要:
-
 ```bash
-sudo apt install libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev
-```
-
-実行:
-
-```bash
-cd src-tauri
+cd engine
 cargo run
 ```
 
-テスト:
+Linux で必要なパッケージ: `libxkbcommon-x11-0` (winit のキーボード処理が実行時にロードする)。
+フォントは実行環境のシステムフォントを使う (探索パスは engine/src/text.rs の `FONT_PATHS`)。
+
+## シェル編について (src-tauri/ + ui/)
+
+一時期 Tauri で「ブラウザのガワ」(タブ・アドレスバー・IPC・プロセス分離) を作った。
+動くタブブラウザとして完成しており、Chrome のブラウザプロセス側の構造を学ぶ教材として残している。
+解説は [docs/architecture.md](docs/architecture.md)。動かすには:
 
 ```bash
-cd src-tauri
-cargo test
+cd src-tauri && cargo run
 ```
 
 ## 参考資料
 
-- [Tauri v2 ドキュメント](https://v2.tauri.app/)
-- [Tauri Webview (マルチ WebView API)](https://docs.rs/tauri/latest/tauri/webview/)
-- [wry](https://github.com/tauri-apps/wry) - Tauri が内部で使う WebView ライブラリ
-
----
-
-なお、当初はレンダリングエンジンごとフルスクラッチで実装する計画だった。
-その学習計画は [docs/learning-plan.md](docs/learning-plan.md) に残してある
-(ブラウザ内部の仕組みを学ぶ資料として有用なため)。
+- [Let's build a browser engine!](https://limpet.net/mbrubeck/2014/08/08/toy-layout-engine-1.html) - Matt Brubeck による Rust 製トイブラウザチュートリアル
+- [Web Browser Engineering](https://browser.engineering/) - ブラウザの仕組みを体系的に解説する教科書
+- [Robinson](https://github.com/mbrubeck/robinson) - 上記チュートリアルの参考実装
+- [Servo](https://github.com/servo/servo) - Mozilla の Rust 製ブラウザエンジン
