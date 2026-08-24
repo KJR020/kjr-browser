@@ -1,3 +1,7 @@
+// ツールバー UI のロジック。
+// タブバー・ナビゲーションボタン・アドレスバーの操作を Rust 側の
+// IPC コマンド (src-tauri/src/commands.rs) に橋渡しし、Rust 側からの
+// tabs-changed イベントを受けてタブバーを再描画する。
 // withGlobalTauri: true により window.__TAURI__ 経由で API を使う (バンドラ不要)
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;

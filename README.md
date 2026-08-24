@@ -32,13 +32,23 @@ Tauri v2 のマルチ WebView 機能 (`unstable` フィーチャ) を使い、1 
 
 ## ディレクトリ構成
 
+レイヤー構成の詳細と実際のブラウザとの対応は [docs/architecture.md](docs/architecture.md) を参照。
+
 ```
-├── src-tauri/          Rust / Tauri 本体
-│   ├── src/main.rs     ウィンドウ構築・IPC コマンド
-│   ├── tauri.conf.json Tauri 設定
-│   └── capabilities/   WebView ごとの権限定義
-├── ui/                 ツールバー UI (素の HTML/CSS/JS)
-└── docs/               計画・メモ
+├── src-tauri/               Rust / Tauri 本体
+│   ├── src/
+│   │   ├── main.rs          エントリーポイント (配線のみ)
+│   │   ├── commands.rs      IPC 境界 (UI からの invoke の受付窓口)
+│   │   ├── tabs.rs          ドメイン層 (タブの状態管理と操作)
+│   │   ├── url.rs           アドレスバー入力の解釈 (純粋ロジック + テスト)
+│   │   └── window.rs        プラットフォーム層 (ウィンドウ構築・OS 差分)
+│   ├── tauri.conf.json      Tauri 設定
+│   └── capabilities/        WebView ごとの権限定義
+├── ui/                      ツールバー UI (素の HTML/CSS/JS)
+│   ├── index.html           ツールバーの構造
+│   ├── toolbar.js           ツールバーのロジック (IPC 呼び出し)
+│   └── style.css            ツールバーの見た目
+└── docs/                    設計・計画メモ
 ```
 
 ## ロードマップ
