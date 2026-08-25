@@ -4,21 +4,31 @@
 //! を繰り返す無限ループ (イベントループ)。ブラウザも例外ではなく、
 //! Chrome のメッセージループも構造はこれと同じ。
 //!
-//! Phase 1 のパイプライン:
+//! Phase 2 までのパイプライン:
 //!
-//!   display_list::sample_page()  … 何を描くか (手書きのディスプレイリスト)
-//!        ↓
-//!   paint::paint()               … 図形 → ピクセル (ラスタライズ)
-//!        ↓
-//!   softbuffer                   … ピクセル → ウィンドウ (OS への転送)
+//!   SAMPLE_HTML (テキスト)
+//!        ↓ html::parse()        … パース (文字列 → 構造)
+//!   DOM ツリー
+//!        ↓ render::render()     … UA スタイル + 縦積みレイアウト (Phase 3/4 で分離予定)
+//!   ディスプレイリスト
+//!        ↓ paint::paint()       … ラスタライズ (図形 → ピクセル)
+//!   ピクセルバッファ
+//!        ↓ softbuffer           … OS への転送
+//!   画面
 //!
 //! モジュール構成 (レンダリングパイプラインの工程名に対応):
+//! - html.rs         … HTML パーサ (テキスト → DOM)
+//! - dom.rs          … DOM ツリーの定義
+//! - render.rs       … DOM → ディスプレイリスト (Phase 2 の仮実装)
 //! - display_list.rs … 描画コマンドの定義 (パイプラインの中間表現)
 //! - paint.rs        … ラスタライズ (図形 → ピクセル)
 //! - text.rs         … フォント処理 (文字 → グリフ画像 → ピクセル)
 
 mod display_list;
+mod dom;
+mod html;
 mod paint;
+mod render;
 mod text;
 
 use std::num::NonZeroU32;
@@ -30,8 +40,28 @@ use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window, WindowId};
 
-use display_list::DisplayCommand;
+use dom::Node;
 use text::FontStack;
+
+/// Phase 2 のデモページ。この文字列がパース → DOM → 描画コマンド → ピクセル
+/// と姿を変えて画面に届く。書き換えて cargo run すればそのまま反映される
+const SAMPLE_HTML: &str = r#"<!DOCTYPE html>
+<html>
+<body>
+  <h1>kjr-engine Phase 2</h1>
+  <!-- この行はコメントなので画面に出ない -->
+  <p>この画面は <strong>HTML 文字列</strong> をパースして描画している。</p>
+  <hr>
+  <h2>できるようになったこと</h2>
+  <ul>
+    <li>タグと属性のパース (再帰下降)</li>
+    <li>DOM ツリーの構築 (起動ログにダンプが出る)</li>
+    <li>DOM からディスプレイリストへの変換</li>
+  </ul>
+  <hr>
+  <p>次の Phase 3 では CSS を当てて、この見た目を変えられるようにする。</p>
+</body>
+</html>"#;
 
 /// アプリの状態。ウィンドウや描画先はイベントループ開始後に
 /// 作られる (resumed で初期化される) ため Option で持つ
@@ -39,7 +69,8 @@ struct App {
     window: Option<Rc<Window>>,
     surface: Option<softbuffer::Surface<Rc<Window>, Rc<Window>>>,
     fonts: FontStack,
-    display_list: Vec<DisplayCommand>,
+    /// 表示中のページの DOM。リサイズのたびにここから描画し直す
+    dom: Node,
 }
 
 impl App {
@@ -55,10 +86,13 @@ impl App {
             return; // 最小化などで大きさが 0 のときは描かない
         };
 
-        // 1. ディスプレイリストをラスタライズしてピクセル画像を得る
-        let pixmap = paint::paint(&self.display_list, &self.fonts, size.width, size.height);
+        // 1. DOM からディスプレイリストを作る (ウィンドウ幅に合わせて毎回作り直す)
+        let commands = render::render(&self.dom, size.width as f32, size.height as f32);
 
-        // 2. ウィンドウのピクセルバッファへ転送する
+        // 2. ディスプレイリストをラスタライズしてピクセル画像を得る
+        let pixmap = paint::paint(&commands, &self.fonts, size.width, size.height);
+
+        // 3. ウィンドウのピクセルバッファへ転送する
         surface.resize(w, h).expect("surface resize");
         let mut buffer = surface.buffer_mut().expect("get frame buffer");
         paint::copy_to_buffer(&pixmap, &mut buffer);
@@ -108,15 +142,15 @@ impl ApplicationHandler for App {
 }
 
 fn main() {
+    // パース結果の DOM ツリーを標準出力にダンプする。
+    // HTML がどう木になったかを目で確認できる (Phase 2 の学習ポイント)
+    let dom = html::parse(SAMPLE_HTML);
+    println!("--- DOM ツリー ---\n{}", dom.dump(0));
+
     let fonts = FontStack::load_system_fonts().expect("load fonts");
     let event_loop = EventLoop::new().expect("create event loop");
     // Wait = イベントが来るまで眠る (アニメーションしないなら CPU を使わない)
     event_loop.set_control_flow(ControlFlow::Wait);
-    let mut app = App {
-        window: None,
-        surface: None,
-        fonts,
-        display_list: display_list::sample_page(),
-    };
+    let mut app = App { window: None, surface: None, fonts, dom };
     event_loop.run_app(&mut app).expect("run event loop");
 }

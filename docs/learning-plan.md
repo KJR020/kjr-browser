@@ -70,10 +70,14 @@ paint.rs = ラスタライズ, text.rs = フォント処理)
 
 ### 完了条件
 
-- [ ] `<h1>Hello</h1>` をパースして DOM ノードを生成できる
-- [ ] ネストしたタグ `<div><p>text</p></div>` を正しくツリー化できる
-- [ ] 属性 `<div class="main" id="root">` をパースできる
-- [ ] DOM ツリーから画面に描画できる
+- [x] `<h1>Hello</h1>` をパースして DOM ノードを生成できる
+- [x] ネストしたタグ `<div><p>text</p></div>` を正しくツリー化できる
+- [x] 属性 `<div class="main" id="root">` をパースできる
+- [x] DOM ツリーから画面に描画できる
+
+→ ✅ **Phase 2 完了** (engine/src/: html.rs = 再帰下降パーサ, dom.rs = ツリー定義,
+render.rs = DOM → ディスプレイリスト変換の仮実装。コメント・DOCTYPE・void 要素・
+空白の畳み込みにも対応。起動時に DOM ツリーが標準出力へダンプされる)
 
 ### 参考資料
 

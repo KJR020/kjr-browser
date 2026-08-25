@@ -16,7 +16,7 @@ URL → [Network] → HTML → [Parser] → DOM → [Style] → スタイルツ�
 | Phase | テーマ | 状態 |
 |-------|-------|------|
 | 1 | 画面に描画する (ウィンドウ・矩形・テキスト) | ✅ 完了 |
-| 2 | HTML → DOM → 画面 | 未着手 |
+| 2 | HTML → DOM → 画面 | ✅ 完了 |
 | 3 | CSS スタイル適用 | 未着手 |
 | 4 | レイアウトエンジン | 未着手 |
 | 5 | ネットワーク | 未着手 |
@@ -28,6 +28,9 @@ URL → [Network] → HTML → [Parser] → DOM → [Style] → スタイルツ�
 ├── engine/              ★ 本線: トイレンダリングエンジン
 │   └── src/
 │       ├── main.rs          イベントループとウィンドウ (Phase 1)
+│       ├── html.rs          HTML パーサ: テキスト → DOM (Phase 2)
+│       ├── dom.rs           DOM ツリーの定義 (Phase 2)
+│       ├── render.rs        DOM → ディスプレイリスト (Phase 2 の仮実装)
 │       ├── display_list.rs  描画コマンド定義 (パイプラインの中間表現)
 │       ├── paint.rs         ラスタライズ (図形 → ピクセル)
 │       └── text.rs          フォント処理 (文字 → グリフ → ピクセル)
