@@ -32,6 +32,7 @@ pub fn normalize(input: &str) -> Result<Url, String> {
 mod tests {
     use super::normalize;
 
+    /// スキーム付きの完全な URL は、クエリ文字列も含めて一切変更されないこと
     #[test]
     fn keeps_full_url() {
         assert_eq!(
@@ -40,11 +41,15 @@ mod tests {
         );
     }
 
+    /// "example.com" のようなドメインだけの入力に https:// が補われること。
+    /// アドレスバーにホスト名だけ打って Enter で開けるのはこの処理のおかげ
     #[test]
     fn adds_https_to_domain() {
         assert_eq!(normalize("example.com").unwrap().as_str(), "https://example.com/");
     }
 
+    /// URL に見えない入力 (スペースを含む・ドットが無い) は検索クエリとして扱い、
+    /// 検索エンジンの URL に変換されること
     #[test]
     fn falls_back_to_search() {
         let url = normalize("rust webview").unwrap();
@@ -52,11 +57,15 @@ mod tests {
         assert_eq!(url.query(), Some("q=rust+webview"));
     }
 
+    /// 空文字や空白だけの入力はエラーになること。
+    /// 空のまま Enter を押しても遷移しないことの保証
     #[test]
     fn rejects_empty() {
         assert!(normalize("   ").is_err());
     }
 
+    /// 新規タブで使う about:blank が、検索に飛ばされずそのまま通ること
+    /// (ドットを含まないため、特別扱いしないと検索クエリになってしまう)
     #[test]
     fn allows_about_blank() {
         assert_eq!(normalize("about:blank").unwrap().as_str(), "about:blank");

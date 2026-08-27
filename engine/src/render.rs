@@ -173,6 +173,9 @@ mod tests {
     use super::*;
     use crate::html;
 
+    /// DOM がディスプレイリスト (描画コマンドの列) に変換されること。
+    /// 「背景の矩形 1 個 + テキスト 2 個」が期待値で、
+    /// h1 と p の中身がテキストコマンドとして順番どおりに出てくることを見る
     #[test]
     fn generates_background_and_text() {
         let dom = html::parse("<html><h1>Title</h1><p>body text</p></html>");
@@ -189,6 +192,8 @@ mod tests {
         assert_eq!(texts, vec!["Title", "body text"]);
     }
 
+    /// ブロック要素が縦に積み重なること (CSS の通常フローの基本)。
+    /// 先に書かれた <p> の方が Y 座標が小さい = 画面の上にあることを確認する
     #[test]
     fn blocks_stack_downward() {
         let dom = html::parse("<html><p>first</p><p>second</p></html>");
@@ -203,6 +208,9 @@ mod tests {
         assert!(ys[0] < ys[1], "後のブロックほど下に積まれる");
     }
 
+    /// 文の途中にインライン要素 (<strong> など) があっても、
+    /// 行が分断されず 1 本のテキストにつながること。
+    /// DOM 上は「テキスト・要素・テキスト」の 3 ノードに割れているのを平坦化している
     #[test]
     fn flattens_inline_elements() {
         let dom = html::parse("<html><p>a <strong>b</strong> c</p></html>");

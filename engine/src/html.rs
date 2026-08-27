@@ -216,6 +216,8 @@ mod tests {
     use super::parse;
     use crate::dom::NodeType;
 
+    /// 最小のケース: 開きタグ・テキスト・閉じタグを読んで
+    /// 「要素ノードの子にテキストノードがぶら下がる」形になること
     #[test]
     fn parses_single_element_with_text() {
         let dom = parse("<html><h1>Hello</h1></html>");
@@ -227,6 +229,9 @@ mod tests {
         }
     }
 
+    /// 入れ子のタグが親子関係として正しくツリー化されること。
+    /// パーサの再帰 (parse_element → parse_nodes → parse_element) が
+    /// HTML のネストに対応していることの確認
     #[test]
     fn parses_nested_elements() {
         let dom = parse("<html><div><p>text</p></div></html>");
@@ -235,6 +240,8 @@ mod tests {
         assert_eq!(div.children[0].tag_name(), Some("p"));
     }
 
+    /// 属性が名前と値のペアとして取り出せること。
+    /// HTML では引用符が二重・一重・無しの 3 通り書けるので、そのすべてを受け付ける
     #[test]
     fn parses_attributes() {
         let dom = parse(r#"<html><div class="main" id=root data-x='1'></div></html>"#);
@@ -246,6 +253,9 @@ mod tests {
         assert_eq!(data.attributes.get("data-x").unwrap(), "1");
     }
 
+    /// 画面に出ないもの (DOCTYPE 宣言と HTML コメント) が
+    /// DOM ツリーに残らず読み飛ばされること。
+    /// 残っていると子の数が 1 にならないので検出できる
     #[test]
     fn skips_comments_and_doctype() {
         let dom = parse("<!DOCTYPE html><html><!-- hidden --><p>shown</p></html>");
@@ -253,6 +263,9 @@ mod tests {
         assert_eq!(dom.children[0].tag_name(), Some("p"));
     }
 
+    /// void 要素 (<hr> や <br> など閉じタグを持たないタグ) の扱い。
+    /// 閉じタグを待ってしまうと後続の <p> が hr の子になってしまうため、
+    /// 3 つが兄弟として並ぶことを確認する
     #[test]
     fn handles_void_elements() {
         let dom = parse("<html><p>a</p><hr><p>b</p></html>");
@@ -260,13 +273,18 @@ mod tests {
         assert_eq!(tags, vec!["p", "hr", "p"]);
     }
 
+    /// <html> で囲まれていない断片的な HTML を渡された場合に、
+    /// ルートを補って必ず 1 本の木にすること (ブラウザも同じ補完をする)
     #[test]
-    fn wraps_fragments_in_html_root(){
+    fn wraps_fragments_in_html_root() {
         let dom = parse("<p>a</p><p>b</p>");
         assert_eq!(dom.tag_name(), Some("html"));
         assert_eq!(dom.children.len(), 2);
     }
 
+    /// テキスト中の改行やインデントの連続空白が 1 個の半角スペースに
+    /// まとめられること。HTML では空白の連続を 1 個とみなす仕様があり、
+    /// ソースを整形しても表示が変わらないのはこの処理のおかげ
     #[test]
     fn collapses_whitespace_in_text() {
         let dom = parse("<html><p>a\n   b</p></html>");
