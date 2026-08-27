@@ -3,6 +3,7 @@
 ブラウザの仕組みを理解するために、レンダリングエンジンをフルスクラッチで作る学習プロジェクト。
 
 URL を受け取ってからピクセルを画面に描くまでの全工程を、Rust で自分の手で実装する。
+OS の WebView やブラウザエンジンは一切使わない。
 
 ```
 URL → [Network] → HTML → [Parser] → DOM → [Style] → スタイルツリー
@@ -25,7 +26,7 @@ URL → [Network] → HTML → [Parser] → DOM → [Style] → スタイルツ�
 ## ディレクトリ構成
 
 ```
-├── engine/              ★ 本線: トイレンダリングエンジン
+├── engine/              トイレンダリングエンジン
 │   └── src/
 │       ├── main.rs          イベントループとウィンドウ (Phase 1)
 │       ├── html.rs          HTML パーサ: テキスト → DOM (Phase 2)
@@ -34,16 +35,22 @@ URL → [Network] → HTML → [Parser] → DOM → [Style] → スタイルツ�
 │       ├── display_list.rs  描画コマンド定義 (パイプラインの中間表現)
 │       ├── paint.rs         ラスタライズ (図形 → ピクセル)
 │       └── text.rs          フォント処理 (文字 → グリフ → ピクセル)
-├── docs/
-│   ├── learning-plan.md     フェーズ別の学習計画 (本線のロードマップ)
-│   └── architecture.md      シェル編のアーキテクチャ解説
-├── src-tauri/           (シェル編・完了) Tauri 製ブラウザシェル
-└── ui/                  (シェル編・完了) そのツールバー UI
+└── docs/
+    └── learning-plan.md     フェーズ別の学習計画
 ```
 
 モジュール名はレンダリングパイプラインの工程名に揃えてある。
-Phase が進むごとに `html.rs` (パーサ)、`dom.rs`、`css.rs`、`style.rs`、`layout.rs` が
+Phase が進むごとに `css.rs` (パーサ)、`style.rs`、`layout.rs` が
 engine/src/ に増えていき、ディレクトリ一覧がそのままパイプライン図になる。
+
+## 技術スタック
+
+| クレート | 用途 |
+|---------|------|
+| winit | クロスプラットフォームのウィンドウ管理とイベントループ |
+| softbuffer | ウィンドウへのピクセル書き込み (GPU 不使用) |
+| tiny-skia | CPU ラスタライザ (図形 → ピクセル) |
+| fontdue | フォントラスタライザ (文字 → グリフ画像) |
 
 ## ビルド・実行
 
@@ -52,17 +59,17 @@ cd engine
 cargo run
 ```
 
+起動すると、パースした DOM ツリーが標準出力にダンプされる。
+表示する HTML は `engine/src/main.rs` の `SAMPLE_HTML` を書き換えて試せる。
+
 Linux で必要なパッケージ: `libxkbcommon-x11-0` (winit のキーボード処理が実行時にロードする)。
-フォントは実行環境のシステムフォントを使う (探索パスは engine/src/text.rs の `FONT_PATHS`)。
+フォントは実行環境のシステムフォントを使う (探索パスは `engine/src/text.rs` の `FONT_PATHS`)。
 
-## シェル編について (src-tauri/ + ui/)
-
-一時期 Tauri で「ブラウザのガワ」(タブ・アドレスバー・IPC・プロセス分離) を作った。
-動くタブブラウザとして完成しており、Chrome のブラウザプロセス側の構造を学ぶ教材として残している。
-解説は [docs/architecture.md](docs/architecture.md)。動かすには:
+## テスト
 
 ```bash
-cd src-tauri && cargo run
+cd engine
+cargo test
 ```
 
 ## 参考資料

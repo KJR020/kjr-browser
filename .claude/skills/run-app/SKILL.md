@@ -1,90 +1,67 @@
 ---
 name: run-app
-description: kjr-browser の GUI (engine/ のトイエンジン、src-tauri/ の Tauri シェル) をヘッドレス環境の仮想ディスプレイ上で起動・操作・スクリーンショットする手順
+description: kjr-engine (engine/) をヘッドレス環境の仮想ディスプレイ上で起動し、描画結果をスクリーンショットで確認する手順
 ---
 
-# kjr-browser をヘッドレス環境で起動・操作する
+# kjr-engine をヘッドレス環境で起動・確認する
 
-## 0. どちらを動かすか
-
-- **engine/** (本線: フルスクラッチのトイエンジン) — `cd engine && cargo build` して
-  `./target/debug/kjr-engine`。追加の実行時依存: `apt-get install -y libxkbcommon-x11-0`
-  (無いと winit が起動時に panic する)。以下の Xvfb / スクリーンショット手順は共通。
-- **src-tauri/** (シェル編: Tauri 製タブブラウザ) — 以下の手順の通り。
-
-Tauri 製 GUI アプリなので、リモートコンテナでは Xvfb (仮想ディスプレイ) 上で起動し、
-xdotool で操作、ImageMagick の `import` でスクリーンショットを撮って確認する。
+GUI アプリなので、リモートコンテナでは Xvfb (仮想ディスプレイ) 上で起動し、
+ImageMagick の `import` でスクリーンショットを撮って目視確認する。
 
 ## 1. 依存パッケージ (初回のみ)
 
 ```bash
-apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev \
-  xvfb imagemagick xdotool x11-utils
+apt-get install -y libxkbcommon-x11-0 xvfb imagemagick x11-utils
 ```
 
-Claude Code リモート環境では HTTPS が MITM プロキシ経由のため、WebView が
-HTTPS ページを読めるようプロキシ CA を システムに登録する (初回のみ):
-
-```bash
-cp /root/.ccr/ca-bundle.crt /usr/local/share/ca-certificates/agentproxy.crt
-update-ca-certificates
-```
+`libxkbcommon-x11-0` は winit がキーボード処理のために実行時に動的ロードする。
+無いと起動直後に `xkbcommon-dl` で panic する (ビルドは通るので気づきにくい)。
 
 ## 2. ビルドと起動
 
 ```bash
-cd src-tauri && cargo build
+cd engine && cargo build
 
-Xvfb :99 -screen 0 1280x900x24 >/dev/null 2>&1 &
-DISPLAY=:99 WEBKIT_DISABLE_COMPOSITING_MODE=1 WEBKIT_DISABLE_DMABUF_RENDERER=1 \
-  ./target/debug/kjr-browser > /tmp/app.log 2>&1 &
-sleep 6   # 起動待ち
+# Xvfb は setsid nohup で切り離して起動する。
+# そうしないと起動したシェルの終了に巻き込まれて死ぬ
+setsid nohup Xvfb :99 -screen 0 1280x900x24 >/dev/null 2>&1 < /dev/null &
+sleep 2
+DISPLAY=:99 xdotool getdisplaygeometry   # 生きているか確認 (1280 900 が返る)
+
+setsid nohup env DISPLAY=:99 ./target/debug/kjr-engine > /tmp/engine.log 2>&1 < /dev/null &
+sleep 5
+pgrep -x kjr-engine >/dev/null && echo OK || tail -20 /tmp/engine.log
 ```
 
-- `WEBKIT_DISABLE_*` は GPU なし環境での WebKitGTK 描画に必須
-- `libEGL warning: DRI3` はただの警告で無害
-- Xvfb にはウィンドウマネージャがないため `xdotool windowsize` は
-  ウィンドウ名でなく X の window id 指定 (`xwininfo -root -tree` で確認) が確実
-
-## 3. ネットワーク制限とテストページ
-
-コンテナのプロキシは許可ドメイン制で、example.com など一般サイトは 403 になる。
-動作確認はローカル HTTP サーバで行う (127.0.0.1 は NO_PROXY 対象):
+## 3. 確認
 
 ```bash
-mkdir -p /tmp/www && cd /tmp/www
-# index.html / page2.html (リンク付き) を作って:
-python3 -m http.server 8090 --bind 127.0.0.1 &
+DISPLAY=:99 import -window root /tmp/shot.png
 ```
 
-ブラウザには `http://127.0.0.1:8090/` を入力させる。
+撮ったら **必ず Read ツールで画像を目視確認する**。真っ黒・真っ白なら起動失敗。
 
-## 4. 操作 (xdotool) とスクリーンショット
+標準出力にはパース結果の DOM ツリーがダンプされるので、
+描画がおかしいときは「パースの問題か描画の問題か」をここで切り分けられる:
 
 ```bash
-export DISPLAY=:99
-# アドレスバーをクリックして URL 入力 (座標は ui/ のレイアウト依存)
-xdotool mousemove 650 56 click 1        # アドレスバー (2段ツールバーの下段)
-xdotool key ctrl+a
-xdotool type --delay 30 "http://127.0.0.1:8090/"
-xdotool key Return
-sleep 4
-import -window root /tmp/shot.png       # 撮ったら必ず Read で目視確認する
+head -30 /tmp/engine.log
 ```
 
-主要 UI の座標 (ウィンドウ 1200x800、ツールバー 2 段 80px):
-- 1段目 (y≈16): タブチップ (固定幅 180px、x=8 から順に並ぶ)、その右に + ボタン
-- 2段目 (y≈56): 戻る (x≈22) / 進む (x≈62) / 再読み込み (x≈100) / アドレスバー (x≈650)
+表示内容を変えたいときは `engine/src/main.rs` の `SAMPLE_HTML` を書き換えて再ビルドする。
 
-## 5. 後片付け
+## 4. 後片付け
 
 ```bash
-kill %1 %2 2>/dev/null   # app と Xvfb (pid をファイルに控えておくと確実)
+pkill -x kjr-engine
 ```
+
+`pkill -f kjr-engine` は使わないこと。実行中のシェル自身のコマンドラインにも
+その文字列が含まれるため、自分を巻き添えにして殺してしまう (exit code 143/144)。
 
 ## 既知の注意点
 
-- Linux では子 WebView は GtkBox に詰められ位置指定が効かない。ツールバーの
-  高さ固定は main.rs の GTK コード (`set_child_packing`) が担う。レイアウトが
-  半々に割れたらこの処理が壊れている。
-- `cargo run` (tauri dev 相当ではない) で十分。frontendDist は `../ui` の静的ファイル。
+- Xvfb にはウィンドウマネージャがないため、リサイズは `xdotool windowsize` に
+  ウィンドウ名ではなく X の window id を渡すのが確実 (`xwininfo -root -tree` で確認)。
+- フォントは `engine/src/text.rs` の `FONT_PATHS` から探索する。
+  「フォントが見つからない」で落ちたら、その環境のフォントパスを追加する。
