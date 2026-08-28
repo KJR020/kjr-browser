@@ -1,151 +1,149 @@
-//! DOM → ディスプレイリスト変換 (Phase 2 の仮実装)。
+//! スタイルツリー → ディスプレイリスト変換 (Phase 3 時点の実装)。
 //!
-//! 本物のブラウザではこの間に 2 つの大きな工程が挟まる:
+//! 本物のブラウザではこの間にレイアウト工程が挟まる:
 //!
-//!   DOM → [Style: CSS を当てる] → スタイルツリー
-//!       → [Layout: 位置と大きさを計算] → レイアウトツリー → ディスプレイリスト
+//!   スタイルツリー → [Layout: 位置と大きさを計算] → レイアウトツリー → ディスプレイリスト
 //!
-//! Phase 2 の時点ではまだ CSS が無いので、このモジュールが
-//! 「タグ名ごとの決め打ちスタイル」(ブラウザの UA スタイルシート相当) と
-//! 「上から順に縦に積むだけの素朴なレイアウト」を一時的に兼任する。
-//! Phase 3 で style.rs に、Phase 4 で layout.rs に、それぞれ役割を明け渡して消える運命。
+//! Phase 3 の時点ではまだレイアウトエンジンが無いので、このモジュールが
+//! 「上から順に縦に積むだけの素朴なレイアウト」を暫定的に兼任している。
+//! Phase 4 で layout.rs に切り出し、ここは純粋な「描画コマンドの発行」だけになる予定。
+//!
+//! Phase 2 との違い: タグ名を見て決め打ちしていたスタイルが消え、
+//! すべて StyledNode の確定済みプロパティから読むようになった。
+//! 見た目の決定権が Rust のコードから CSS に移っている
 
 use crate::display_list::{Color, DisplayCommand};
-use crate::dom::{Node, NodeType};
+use crate::dom::NodeType;
+use crate::style::StyledNode;
 
-const PAGE_BG: Color = Color { r: 0xf7, g: 0xf7, b: 0xf9 };
-const TEXT: Color = Color { r: 0x33, g: 0x33, b: 0x3d };
-const HEADING: Color = Color { r: 0x2b, g: 0x3a, b: 0x67 };
-const RULE: Color = Color { r: 0xc9, g: 0xcd, b: 0xd6 };
+/// 行の高さ = フォントサイズ x この係数 (CSS の line-height の簡略版)
+const LINE_HEIGHT_FACTOR: f32 = 1.4;
+/// 本文の左右の余白
+const PAGE_MARGIN: f32 = 32.0;
 
-/// タグごとの決め打ちスタイル。ブラウザに内蔵されている
-/// 「UA (User Agent) スタイルシート」のごく簡略版。
-/// h1 が大きく太く見えるのは HTML の機能ではなく、UA スタイルのおかげ —
-/// というのが Phase 3 (CSS) につながる伏線
-struct TagStyle {
-    font_size: f32,
-    color: Color,
-    margin_top: f32,
-    margin_bottom: f32,
-}
-
-fn style_for(tag: &str) -> TagStyle {
-    match tag {
-        "h1" => TagStyle { font_size: 34.0, color: HEADING, margin_top: 24.0, margin_bottom: 16.0 },
-        "h2" => TagStyle { font_size: 26.0, color: HEADING, margin_top: 20.0, margin_bottom: 12.0 },
-        "li" => TagStyle { font_size: 18.0, color: TEXT, margin_top: 4.0, margin_bottom: 4.0 },
-        _ => TagStyle { font_size: 18.0, color: TEXT, margin_top: 12.0, margin_bottom: 12.0 },
-    }
-}
-
-/// これより下に「積んで」いく Y 座標カーソル。
-/// ブロック要素を 1 つ描くたびに、その高さぶんだけ下に進む。
-/// たったこれだけでも「ブロック要素は縦に積み重なる」という
-/// CSS 通常フローの基本が再現できる
 struct Renderer {
     commands: Vec<DisplayCommand>,
+    /// 次にブロックを置く Y 座標。1 つ描くたびに下へ進む
     cursor_y: f32,
     viewport_width: f32,
 }
 
-/// DOM ツリーからディスプレイリストを生成する
-pub fn render(dom: &Node, viewport_width: f32, viewport_height: f32) -> Vec<DisplayCommand> {
+/// スタイルツリーからディスプレイリストを生成する
+pub fn render(root: &StyledNode, viewport_width: f32, viewport_height: f32) -> Vec<DisplayCommand> {
     let mut renderer = Renderer { commands: Vec::new(), cursor_y: 16.0, viewport_width };
-    // 背景 (body の背景に相当)
+
+    // ページ全体の背景。body に background-color があればそれを使う
+    let page_bg = find_body_background(root).unwrap_or(Color { r: 0xff, g: 0xff, b: 0xff });
     renderer.commands.push(DisplayCommand::SolidRect {
         x: 0.0,
         y: 0.0,
         width: viewport_width,
         height: viewport_height,
-        color: PAGE_BG,
+        color: page_bg,
     });
-    renderer.render_block_children(dom, 32.0);
+
+    renderer.render_block(root, PAGE_MARGIN);
     renderer.commands
 }
 
+/// body 要素の background-color を探す (ページ背景に使う)
+fn find_body_background(styled: &StyledNode) -> Option<Color> {
+    if styled.tag_name() == Some("body") {
+        return styled.color("background-color");
+    }
+    styled.children.iter().find_map(find_body_background)
+}
+
 impl Renderer {
-    /// ブロック要素の子たちを縦に積みながら描画コマンド化する
-    fn render_block_children(&mut self, node: &Node, x: f32) {
-        for child in &node.children {
-            self.render_block(child, x);
+    /// ブロック 1 つを処理して、その高さぶんカーソルを下へ進める
+    fn render_block(&mut self, styled: &StyledNode, x: f32) {
+        // display: none なら自分も子孫も一切描かない。
+        // <head> や <style> が画面に出ないのも、実は UA スタイルシートの
+        // `head, style { display: none }` によるもので、特別扱いではない
+        if styled.keyword("display") == Some("none") {
+            return;
         }
+        self.cursor_y += styled.px("margin-top", 0.0);
+        let content_x = x + styled.px("padding-left", 0.0);
+
+        // height が指定されたブロック (hr など) は、その高さの矩形として描く。
+        // 本物のブラウザでも <hr> は「高さと背景色を持つブロック」でしかない
+        if let Some(height) = styled.value("height").and_then(|v| v.to_px()) {
+            if let Some(bg) = styled.color("background-color") {
+                self.commands.push(DisplayCommand::SolidRect {
+                    x: content_x,
+                    y: self.cursor_y,
+                    width: self.viewport_width - content_x - PAGE_MARGIN,
+                    height,
+                    color: bg,
+                });
+            }
+            self.cursor_y += height + styled.px("margin-bottom", 0.0);
+            return;
+        }
+
+        let text = collect_inline_text(styled);
+        if text.is_empty() {
+            // テキストを持たないコンテナは、子を順に処理するだけ
+            for child in &styled.children {
+                self.render_block(child, content_x);
+            }
+        } else {
+            self.draw_text_block(styled, &text, content_x);
+        }
+        self.cursor_y += styled.px("margin-bottom", 0.0);
     }
 
-    /// ブロック要素 1 つを処理する
-    fn render_block(&mut self, node: &Node, x: f32) {
-        match &node.node_type {
-            NodeType::Element(data) => match data.tag_name.as_str() {
-                // 構造タグ: 自分は何も描かず子に任せる
-                "html" | "body" => self.render_block_children(node, x),
-                // ul は子の li を少し右にずらして描く (インデント)
-                "ul" | "ol" => {
-                    let style = style_for("ul");
-                    self.cursor_y += style.margin_top;
-                    self.render_block_children(node, x + 24.0);
-                    self.cursor_y += style.margin_bottom;
-                }
-                // hr は水平線 = 細い矩形
-                "hr" => {
-                    self.cursor_y += 16.0;
-                    self.commands.push(DisplayCommand::SolidRect {
-                        x,
-                        y: self.cursor_y,
-                        width: self.viewport_width - x * 2.0,
-                        height: 2.0,
-                        color: RULE,
-                    });
-                    self.cursor_y += 18.0;
-                }
-                // それ以外はテキストを持つブロックとして描く
-                tag => {
-                    let style = style_for(tag);
-                    let mut text = collect_inline_text(node);
-                    if tag == "li" {
-                        text = format!("・{text}"); // list-style の超簡略版
-                    }
-                    if text.is_empty() {
-                        // テキストが無ければコンテナ扱いで子だけ処理する
-                        self.render_block_children(node, x);
-                        return;
-                    }
-                    self.cursor_y += style.margin_top + style.font_size;
-                    self.commands.push(DisplayCommand::Text {
-                        text,
-                        x,
-                        y: self.cursor_y, // Text の y はベースライン位置
-                        size: style.font_size,
-                        color: style.color,
-                    });
-                    self.cursor_y += style.margin_bottom;
-                }
-            },
-            // ブロックの直下に裸のテキストがあった場合 (body 直下など)
-            NodeType::Text(text) => {
-                if !text.is_empty() {
-                    let style = style_for("p");
-                    self.cursor_y += style.margin_top + style.font_size;
-                    self.commands.push(DisplayCommand::Text {
-                        text: text.clone(),
-                        x,
-                        y: self.cursor_y,
-                        size: style.font_size,
-                        color: style.color,
-                    });
-                    self.cursor_y += style.margin_bottom;
-                }
-            }
+    /// テキストを 1 行として描く (背景色があれば行の裏に矩形を敷く)
+    fn draw_text_block(&mut self, styled: &StyledNode, text: &str, x: f32) {
+        let font_size = styled.px("font-size", 18.0);
+        let color = styled.color("color").unwrap_or(Color { r: 0x33, g: 0x33, b: 0x3d });
+        let line_height = font_size * LINE_HEIGHT_FACTOR;
+
+        // list-style の超簡略版
+        let text = if styled.tag_name() == Some("li") {
+            format!("・{text}")
+        } else {
+            text.to_string()
+        };
+
+        if let Some(bg) = styled.color("background-color") {
+            self.commands.push(DisplayCommand::SolidRect {
+                x,
+                y: self.cursor_y,
+                width: self.viewport_width - x - PAGE_MARGIN,
+                height: line_height,
+                color: bg,
+            });
         }
+
+        // ベースライン = 行の上端 + フォントサイズ (下に少し余白が残る位置)
+        self.commands.push(DisplayCommand::Text {
+            text,
+            x,
+            y: self.cursor_y + font_size,
+            size: font_size,
+            color,
+        });
+        self.cursor_y += line_height;
     }
 }
 
-/// 要素の中のテキストを、インライン要素 (<strong> や <a> など) を
-/// またいで 1 本の文字列に平坦化する。
-/// 本来インライン要素は太字や色などスタイルを変えるが、それは Phase 3 の仕事。
-/// ここでは「文の途中にタグがあっても 1 行として扱う」ことだけを実現する
-fn collect_inline_text(node: &Node) -> String {
+/// 要素の中のテキストを、インライン要素 (<strong> や <a> など) をまたいで
+/// 1 本の文字列に平坦化する。display: none の子は飛ばすので、
+/// インライン要素にも display: none が効く。
+/// (インライン要素ごとに色や太さを変えるのは Phase 4 のインラインレイアウトの仕事)
+fn collect_inline_text(styled: &StyledNode) -> String {
     let mut out = String::new();
-    for child in &node.children {
-        match &child.node_type {
+    for child in &styled.children {
+        if child.keyword("display") == Some("none") {
+            continue;
+        }
+        // ブロック要素が入っている場合はコンテナ扱いにするため、テキストを集めない
+        if child.keyword("display") == Some("block") {
+            return String::new();
+        }
+        match &child.node.node_type {
             NodeType::Text(text) => {
                 if !text.is_empty() {
                     if !out.is_empty() {
@@ -171,33 +169,84 @@ fn collect_inline_text(node: &Node) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::html;
+    use crate::{css, html, style};
 
-    /// DOM がディスプレイリスト (描画コマンドの列) に変換されること。
-    /// 「背景の矩形 1 個 + テキスト 2 個」が期待値で、
-    /// h1 と p の中身がテキストコマンドとして順番どおりに出てくることを見る
-    #[test]
-    fn generates_background_and_text() {
-        let dom = html::parse("<html><h1>Title</h1><p>body text</p></html>");
-        let commands = render(&dom, 900.0, 600.0);
-        // 背景矩形 1 + テキスト 2
-        assert_eq!(commands.len(), 3);
-        let texts: Vec<&str> = commands
+    /// HTML と CSS からディスプレイリストを生成するヘルパー。
+    /// UA スタイルシートも噛ませて、実際の描画と同じ条件にする
+    fn render_page(html_src: &str, css_src: &str) -> Vec<DisplayCommand> {
+        let dom = html::parse(html_src);
+        let ua = css::parse(style::USER_AGENT_CSS);
+        let author = css::parse(css_src);
+        let styled = style::style_tree(&dom, &[&ua, &author]);
+        render(&styled, 900.0, 600.0)
+    }
+
+    /// 描画されたテキストだけを順番に取り出す
+    fn texts(commands: &[DisplayCommand]) -> Vec<String> {
+        commands
             .iter()
             .filter_map(|c| match c {
-                DisplayCommand::Text { text, .. } => Some(text.as_str()),
+                DisplayCommand::Text { text, .. } => Some(text.clone()),
                 _ => None,
             })
-            .collect();
-        assert_eq!(texts, vec!["Title", "body text"]);
+            .collect()
+    }
+
+    /// テキストを持つブロックが順に描画コマンドになること
+    #[test]
+    fn generates_text_commands() {
+        let commands = render_page("<html><body><h1>Title</h1><p>body</p></body></html>", "");
+        assert_eq!(texts(&commands), vec!["Title", "body"]);
+    }
+
+    /// CSS で指定した文字色とフォントサイズが、描画コマンドに反映されること。
+    /// Phase 3 の肝: 見た目の決定権が Rust のコードから CSS に移っている
+    #[test]
+    fn applies_css_color_and_font_size() {
+        let commands = render_page(
+            "<html><body><p>x</p></body></html>",
+            "p { color: #ff0000; font-size: 42px; }",
+        );
+        let DisplayCommand::Text { color, size, .. } =
+            commands.iter().find(|c| matches!(c, DisplayCommand::Text { .. })).unwrap()
+        else {
+            unreachable!()
+        };
+        assert_eq!((color.r, color.g, color.b), (0xff, 0x00, 0x00));
+        assert_eq!(*size, 42.0);
+    }
+
+    /// 詳細度の高いルールが実際の描画にまで反映されること
+    /// (パーサ → スタイル解決 → 描画 の一連の流れの結合テスト)
+    #[test]
+    fn specificity_affects_rendering() {
+        let commands = render_page(
+            r#"<html><body><p id="main">x</p></body></html>"#,
+            "p { font-size: 10px; } #main { font-size: 60px; }",
+        );
+        let DisplayCommand::Text { size, .. } =
+            commands.iter().find(|c| matches!(c, DisplayCommand::Text { .. })).unwrap()
+        else {
+            unreachable!()
+        };
+        assert_eq!(*size, 60.0);
+    }
+
+    /// display: none の要素が、自分も子孫も一切描画されないこと
+    #[test]
+    fn display_none_hides_element() {
+        let commands = render_page(
+            r#"<html><body><p>見える</p><p class="x">消える</p></body></html>"#,
+            ".x { display: none; }",
+        );
+        assert_eq!(texts(&commands), vec!["見える"]);
     }
 
     /// ブロック要素が縦に積み重なること (CSS の通常フローの基本)。
-    /// 先に書かれた <p> の方が Y 座標が小さい = 画面の上にあることを確認する
+    /// 先に書かれた <p> の方が Y 座標が小さい = 画面の上にある
     #[test]
     fn blocks_stack_downward() {
-        let dom = html::parse("<html><p>first</p><p>second</p></html>");
-        let commands = render(&dom, 900.0, 600.0);
+        let commands = render_page("<html><body><p>first</p><p>second</p></body></html>", "");
         let ys: Vec<f32> = commands
             .iter()
             .filter_map(|c| match c {
@@ -209,19 +258,39 @@ mod tests {
     }
 
     /// 文の途中にインライン要素 (<strong> など) があっても、
-    /// 行が分断されず 1 本のテキストにつながること。
-    /// DOM 上は「テキスト・要素・テキスト」の 3 ノードに割れているのを平坦化している
+    /// 行が分断されず 1 本のテキストにつながること
     #[test]
     fn flattens_inline_elements() {
-        let dom = html::parse("<html><p>a <strong>b</strong> c</p></html>");
-        let commands = render(&dom, 900.0, 600.0);
-        let text = commands
+        let commands =
+            render_page("<html><body><p>a <strong>b</strong> c</p></body></html>", "");
+        assert_eq!(texts(&commands), vec!["a b c"]);
+    }
+
+    /// background-color が矩形の描画コマンドになること。
+    /// 背景はテキストより先に発行される (後から描いたものが上に載るため)
+    #[test]
+    fn draws_background_behind_text() {
+        let commands = render_page(
+            "<html><body><p>x</p></body></html>",
+            "p { background-color: #00ff00; }",
+        );
+        let bg_index = commands
             .iter()
-            .find_map(|c| match c {
-                DisplayCommand::Text { text, .. } => Some(text.clone()),
-                _ => None,
-            })
+            .position(|c| matches!(c, DisplayCommand::SolidRect { color, .. }
+                if (color.r, color.g, color.b) == (0x00, 0xff, 0x00)))
+            .expect("背景の矩形が見つからない");
+        let text_index = commands
+            .iter()
+            .position(|c| matches!(c, DisplayCommand::Text { .. }))
             .unwrap();
-        assert_eq!(text, "a b c");
+        assert!(bg_index < text_index, "背景はテキストより先に描かれる");
+    }
+
+    /// <style> の中身が本文として画面に出てしまわないこと
+    #[test]
+    fn does_not_render_style_element_content() {
+        let commands =
+            render_page("<html><head><style>p { color: red; }</style></head><body><p>x</p></body></html>", "");
+        assert_eq!(texts(&commands), vec!["x"]);
     }
 }

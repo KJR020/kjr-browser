@@ -4,31 +4,37 @@
 //! を繰り返す無限ループ (イベントループ)。ブラウザも例外ではなく、
 //! Chrome のメッセージループも構造はこれと同じ。
 //!
-//! Phase 2 までのパイプライン:
+//! Phase 3 までのパイプライン:
 //!
 //!   SAMPLE_HTML (テキスト)
-//!        ↓ html::parse()        … パース (文字列 → 構造)
-//!   DOM ツリー
-//!        ↓ render::render()     … UA スタイル + 縦積みレイアウト (Phase 3/4 で分離予定)
+//!        ↓ html::parse()          … パース (文字列 → 構造)
+//!   DOM ツリー          + CSS (UA スタイル + <style> の中身)
+//!        ↓ style::style_tree()    … セレクタマッチング・カスケード・継承
+//!   スタイルツリー (各ノードに確定済みスタイル)
+//!        ↓ render::render()       … 縦積みレイアウト (Phase 4 で layout.rs に分離予定)
 //!   ディスプレイリスト
-//!        ↓ paint::paint()       … ラスタライズ (図形 → ピクセル)
+//!        ↓ paint::paint()         … ラスタライズ (図形 → ピクセル)
 //!   ピクセルバッファ
-//!        ↓ softbuffer           … OS への転送
+//!        ↓ softbuffer             … OS への転送
 //!   画面
 //!
 //! モジュール構成 (レンダリングパイプラインの工程名に対応):
 //! - html.rs         … HTML パーサ (テキスト → DOM)
 //! - dom.rs          … DOM ツリーの定義
-//! - render.rs       … DOM → ディスプレイリスト (Phase 2 の仮実装)
+//! - css.rs          … CSS パーサ (テキスト → スタイルシート)
+//! - style.rs        … スタイル解決 (DOM + CSS → スタイルツリー)
+//! - render.rs       … スタイルツリー → ディスプレイリスト
 //! - display_list.rs … 描画コマンドの定義 (パイプラインの中間表現)
 //! - paint.rs        … ラスタライズ (図形 → ピクセル)
 //! - text.rs         … フォント処理 (文字 → グリフ画像 → ピクセル)
 
+mod css;
 mod display_list;
 mod dom;
 mod html;
 mod paint;
 mod render;
+mod style;
 mod text;
 
 use std::num::NonZeroU32;
@@ -40,26 +46,37 @@ use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window, WindowId};
 
+use css::Stylesheet;
 use dom::Node;
 use text::FontStack;
 
-/// Phase 2 のデモページ。この文字列がパース → DOM → 描画コマンド → ピクセル
+/// Phase 3 のデモページ。この文字列が HTML+CSS → DOM+スタイル → 描画コマンド → ピクセル
 /// と姿を変えて画面に届く。書き換えて cargo run すればそのまま反映される
 const SAMPLE_HTML: &str = r#"<!DOCTYPE html>
 <html>
+<head>
+  <style>
+    body { background-color: #eef1f7; color: #2f3340; }
+    h1 { color: #b3003b; font-size: 40px; }
+    .card { background-color: #ffffff; padding-left: 20px; }
+    .muted { color: gray; font-size: 15px; }
+    #highlight { background-color: #fff3bf; color: navy; }
+    li { color: teal; }
+    .secret { display: none; }
+  </style>
+</head>
 <body>
-  <h1>kjr-engine Phase 2</h1>
-  <!-- この行はコメントなので画面に出ない -->
-  <p>この画面は <strong>HTML 文字列</strong> をパースして描画している。</p>
+  <h1>kjr-engine Phase 3</h1>
+  <p class="card">この段落は <span class="secret">(この部分は display:none で消える)</span> CSS でスタイルが当たっている。</p>
+  <p id="highlight" class="muted">ID セレクタは class より詳細度が高いので、この行は 15px のまま navy になる。</p>
   <hr>
-  <h2>できるようになったこと</h2>
+  <h2>カスケードの確認</h2>
   <ul>
-    <li>タグと属性のパース (再帰下降)</li>
-    <li>DOM ツリーの構築 (起動ログにダンプが出る)</li>
-    <li>DOM からディスプレイリストへの変換</li>
+    <li>li { color: teal } が効いている</li>
+    <li class="muted">class の指定が要素セレクタに勝つ</li>
+    <li class="secret">この項目は表示されない</li>
   </ul>
-  <hr>
-  <p>次の Phase 3 では CSS を当てて、この見た目を変えられるようにする。</p>
+  <p class="muted">色とフォントサイズは body から継承される。</p>
 </body>
 </html>"#;
 
@@ -69,8 +86,12 @@ struct App {
     window: Option<Rc<Window>>,
     surface: Option<softbuffer::Surface<Rc<Window>, Rc<Window>>>,
     fonts: FontStack,
-    /// 表示中のページの DOM。リサイズのたびにここから描画し直す
+    /// 表示中のページの DOM。リサイズのたびにここからスタイル解決と描画をやり直す
     dom: Node,
+    /// ブラウザ内蔵のデフォルトスタイル
+    ua_stylesheet: Stylesheet,
+    /// ページが持ち込んだスタイル (<style> の中身)
+    author_stylesheet: Stylesheet,
 }
 
 impl App {
@@ -86,13 +107,20 @@ impl App {
             return; // 最小化などで大きさが 0 のときは描かない
         };
 
-        // 1. DOM からディスプレイリストを作る (ウィンドウ幅に合わせて毎回作り直す)
-        let commands = render::render(&self.dom, size.width as f32, size.height as f32);
+        // 1. DOM に CSS を当ててスタイルツリーを作る。
+        //    スタイルシートは優先度の低い順 (UA → 著者) に渡す
+        let styled = style::style_tree(
+            &self.dom,
+            &[&self.ua_stylesheet, &self.author_stylesheet],
+        );
 
-        // 2. ディスプレイリストをラスタライズしてピクセル画像を得る
+        // 2. スタイルツリーからディスプレイリストを作る (ウィンドウ幅に合わせて毎回作り直す)
+        let commands = render::render(&styled, size.width as f32, size.height as f32);
+
+        // 3. ディスプレイリストをラスタライズしてピクセル画像を得る
         let pixmap = paint::paint(&commands, &self.fonts, size.width, size.height);
 
-        // 3. ウィンドウのピクセルバッファへ転送する
+        // 4. ウィンドウのピクセルバッファへ転送する
         surface.resize(w, h).expect("surface resize");
         let mut buffer = surface.buffer_mut().expect("get frame buffer");
         paint::copy_to_buffer(&pixmap, &mut buffer);
@@ -147,10 +175,21 @@ fn main() {
     let dom = html::parse(SAMPLE_HTML);
     println!("--- DOM ツリー ---\n{}", dom.dump(0));
 
+    // <style> の中身を取り出して、どんな CSS が当たるのか確認する (Phase 3 の学習ポイント)
+    let author_css = style::extract_inline_styles(&dom);
+    println!("--- 著者スタイルシート ---{author_css}");
+
     let fonts = FontStack::load_system_fonts().expect("load fonts");
     let event_loop = EventLoop::new().expect("create event loop");
     // Wait = イベントが来るまで眠る (アニメーションしないなら CPU を使わない)
     event_loop.set_control_flow(ControlFlow::Wait);
-    let mut app = App { window: None, surface: None, fonts, dom };
+    let mut app = App {
+        window: None,
+        surface: None,
+        fonts,
+        dom,
+        ua_stylesheet: css::parse(style::USER_AGENT_CSS),
+        author_stylesheet: css::parse(&author_css),
+    };
     event_loop.run_app(&mut app).expect("run event loop");
 }
