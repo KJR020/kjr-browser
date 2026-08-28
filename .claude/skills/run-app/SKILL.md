@@ -11,11 +11,15 @@ ImageMagick の `import` でスクリーンショットを撮って目視確認�
 ## 1. 依存パッケージ (初回のみ)
 
 ```bash
-apt-get install -y libxkbcommon-x11-0 xvfb imagemagick x11-utils
+apt-get install -y libxkbcommon-x11-0 fonts-dejavu-core fonts-ipafont-gothic \
+  xvfb imagemagick x11-utils
 ```
 
-`libxkbcommon-x11-0` は winit がキーボード処理のために実行時に動的ロードする。
-無いと起動直後に `xkbcommon-dl` で panic する (ビルドは通るので気づきにくい)。
+- `libxkbcommon-x11-0` は winit がキーボード処理のために実行時に動的ロードする。
+  無いと起動直後に `xkbcommon-dl` で panic する (ビルドは通るので気づきにくい)。
+- フォントパッケージが 1 つも無いと `FontStack::load_system_fonts()` が失敗し、
+  ウィンドウを作る前に `.expect("load fonts")` で落ちる。
+  日本語表示には `fonts-ipafont-gothic` のような CJK フォントが要る。
 
 ## 2. ビルドと起動
 

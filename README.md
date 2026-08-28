@@ -7,7 +7,7 @@ OS の WebView やブラウザエンジンは一切使わない。
 
 ```
 URL → [Network] → HTML → [Parser] → DOM → [Style] → スタイルツリー
-    → [Layout] → レイアウトツリー → [Paint] → ディスプレイリスト → ピクセル
+    → [Layout] → レイアウトツリー → ディスプレイリスト → [Paint] → ピクセル
 ```
 
 計画の全体像は [docs/learning-plan.md](docs/learning-plan.md) を参照。
@@ -65,8 +65,19 @@ cargo run
 標準出力にダンプされる。表示するページは `engine/src/main.rs` の
 `SAMPLE_HTML` を書き換えて試せる (HTML も CSS もその場で反映される)。
 
-Linux で必要なパッケージ: `libxkbcommon-x11-0` (winit のキーボード処理が実行時にロードする)。
-フォントは実行環境のシステムフォントを使う (探索パスは `engine/src/text.rs` の `FONT_PATHS`)。
+Linux で必要なパッケージ:
+
+```bash
+# winit がキーボード処理のために実行時にロードする
+sudo apt install libxkbcommon-x11-0
+# 描画に使うフォント (1 つも見つからないと起動時にエラーで終了する)
+sudo apt install fonts-dejavu-core fonts-ipafont-gothic
+```
+
+フォントはバンドルせず、実行環境のシステムフォントを探して使う。
+探索パスは `engine/src/text.rs` の `FONT_PATHS` にあり、
+日本語は先頭のフォントに無い字を後続のフォントで補う (フォントフォールバック)。
+別の環境で「フォントが見つからない」と出た場合は、この一覧にパスを追加する。
 
 ## テスト
 

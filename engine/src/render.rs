@@ -82,14 +82,18 @@ impl Renderer {
             return;
         }
 
-        let text = collect_inline_text(styled);
+        // 行を組み立ててから空白を畳む。ノード単位ではなく行全体で畳むのが要点で、
+        // display:none で消えた要素の前後に空白が 2 つ残るのを防げる。
+        // 行頭・行末の空白は表示しない (CSS の空白処理と同じ)
+        let text = crate::html::collapse_whitespace(&collect_inline_text(styled));
+        let text = text.trim();
         if text.is_empty() {
             // テキストを持たないコンテナは、子を順に処理するだけ
             for child in &styled.children {
                 self.render_block(child, content_x);
             }
         } else {
-            self.draw_text_block(styled, &text, content_x);
+            self.draw_text_block(styled, text, content_x);
         }
         self.cursor_y += styled.px("margin-bottom", 0.0);
     }
@@ -143,24 +147,13 @@ fn collect_inline_text(styled: &StyledNode) -> String {
         if child.keyword("display") == Some("block") {
             return String::new();
         }
+        // 区切りの空白を足さずにそのまま連結する。
+        // 単語の区切りはパーサ (html.rs の collapse_whitespace) が
+        // テキストノードの端に残してくれているので、ここで補うと
+        // `world!` が `world !` のように離れてしまう
         match &child.node.node_type {
-            NodeType::Text(text) => {
-                if !text.is_empty() {
-                    if !out.is_empty() {
-                        out.push(' ');
-                    }
-                    out.push_str(text);
-                }
-            }
-            NodeType::Element(_) => {
-                let inner = collect_inline_text(child);
-                if !inner.is_empty() {
-                    if !out.is_empty() {
-                        out.push(' ');
-                    }
-                    out.push_str(&inner);
-                }
-            }
+            NodeType::Text(text) => out.push_str(text),
+            NodeType::Element(_) => out.push_str(&collect_inline_text(child)),
         }
     }
     out
@@ -292,5 +285,53 @@ mod tests {
         let commands =
             render_page("<html><head><style>p { color: red; }</style></head><body><p>x</p></body></html>", "");
         assert_eq!(texts(&commands), vec!["x"]);
+    }
+
+    /// 句読点の前に空白が入り込まないこと。
+    /// パーサが端の空白を保持し、描画側が区切りを補わないことで成立する
+    #[test]
+    fn keeps_punctuation_attached() {
+        let commands =
+            render_page("<html><body><p>Hello, <strong>world</strong>!</p></body></html>", "");
+        assert_eq!(texts(&commands), vec!["Hello, world!"]);
+    }
+
+    /// 空白の無い境界で単語が分断されないこと
+    #[test]
+    fn does_not_split_adjacent_inline_text() {
+        let commands =
+            render_page("<html><body><p>foo<strong>bar</strong>baz</p></body></html>", "");
+        assert_eq!(texts(&commands), vec!["foobarbaz"]);
+    }
+
+    /// インライン要素どうしの間にある空白は、単語の区切りとして残ること
+    #[test]
+    fn keeps_space_between_inline_elements() {
+        let commands = render_page(
+            "<html><body><p><strong>a</strong> <strong>b</strong></p></body></html>",
+            "",
+        );
+        assert_eq!(texts(&commands), vec!["a b"]);
+    }
+
+    /// ソースの改行やインデントが、表示されるテキストに漏れ出さないこと
+    #[test]
+    fn ignores_source_indentation() {
+        let commands = render_page(
+            "<html>\n  <body>\n    <p>text</p>\n  </body>\n</html>",
+            "",
+        );
+        assert_eq!(texts(&commands), vec!["text"]);
+    }
+
+    /// display:none で消えた要素の前後の空白が、1 個に畳まれること。
+    /// 空白の畳み込みはノード単位ではなく行全体で行われる
+    #[test]
+    fn collapses_whitespace_around_hidden_element() {
+        let commands = render_page(
+            r#"<html><body><p>a <span class="x">hidden</span> b</p></body></html>"#,
+            ".x { display: none; }",
+        );
+        assert_eq!(texts(&commands), vec!["a b"]);
     }
 }

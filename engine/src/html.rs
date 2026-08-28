@@ -12,21 +12,35 @@
 
 use std::collections::HashMap;
 
-use crate::dom::Node;
+use crate::dom::{Node, NodeType};
 
-/// 子を持てない要素 (void element)。`<br>` に `</br>` が無いのは文法エラーではなく仕様
-const VOID_ELEMENTS: &[&str] = &["br", "hr", "img", "input", "meta", "link"];
+/// 子を持てない要素 (void element)。`<br>` に `</br>` が無いのは文法エラーではなく仕様。
+/// HTML 仕様が定める 14 種すべてを列挙する。ここに漏れがあると、
+/// 閉じタグを待ち続けて後続の兄弟要素を子として飲み込んでしまう
+const VOID_ELEMENTS: &[&str] = &[
+    "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param",
+    "source", "track", "wbr",
+];
 
 /// HTML 文字列をパースして DOM ツリーのルートを返す。
 /// `<html>` 要素が無ければ補って必ず 1 本の木にする (ブラウザも同じことをする)
 pub fn parse(source: &str) -> Node {
     let mut parser = Parser { pos: 0, input: source.to_string() };
     let mut nodes = parser.parse_nodes();
+    // 文書のトップレベルには文章の流れ (インラインの文脈) が無いので、
+    // ソースの改行やインデント由来の空白ノードは捨ててよい。
+    // 要素の内部では単語の区切りとして意味を持つため残す
+    nodes.retain(|node| !is_blank_text(node));
     if nodes.len() == 1 && nodes[0].tag_name() == Some("html") {
         nodes.remove(0)
     } else {
         Node::elem("html".to_string(), HashMap::new(), nodes)
     }
+}
+
+/// 中身が空白だけのテキストノードか
+fn is_blank_text(node: &Node) -> bool {
+    matches!(&node.node_type, NodeType::Text(text) if text.trim().is_empty())
 }
 
 /// パーサの状態は「入力文字列」と「今どこまで読んだか (pos)」だけ
@@ -85,7 +99,9 @@ impl Parser {
     fn parse_nodes(&mut self) -> Vec<Node> {
         let mut nodes = Vec::new();
         loop {
-            self.consume_whitespace();
+            // ここで空白を読み飛ばしてはいけない。
+            // `Hello, <strong>world</strong>!` の "Hello, " の後ろの空白のように、
+            // タグの境界にある空白は単語の区切りとして意味を持つ
             if self.eof() || self.starts_with("</") {
                 break;
             }
@@ -129,10 +145,7 @@ impl Parser {
     /// テキストノード: 次のタグが始まるまでを 1 つの Text にする
     fn parse_text(&mut self) -> Node {
         let text = self.consume_while(|c| c != '<');
-        // 改行やインデント由来の連続空白を 1 個にたたむ
-        // (HTML では空白の連続は 1 個とみなすルールがある)
-        let collapsed: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
-        Node::text(collapsed)
+        Node::text(collapse_whitespace(&text))
     }
 
     /// 要素: `<tag attr="val">子...</tag>` をパースする。
@@ -209,6 +222,34 @@ impl Parser {
             self.consume_while(|c| !c.is_whitespace() && c != '>')
         }
     }
+}
+
+/// HTML の空白処理: 連続する空白 (改行・タブ含む) を半角スペース 1 個にたたむ。
+/// 本来この処理は「行を組み立てるとき」に行全体へ適用されるものなので、
+/// render.rs が連結後のテキストにも同じ関数を使う。
+/// 端の空白も 1 個として保持するのが要点で、これがあるおかげで
+/// `Hello, <strong>world</strong>!` が "Hello, world!" のまま連結できる。
+/// 逆に端を落としてしまうと、描画側で区切りを補う羽目になり
+/// "Hello, world !" のような余計な空白が入り込む
+pub fn collapse_whitespace(text: &str) -> String {
+    let mut out = String::new();
+    let mut pending_space = false;
+    for c in text.chars() {
+        if c.is_whitespace() {
+            pending_space = true;
+        } else {
+            if pending_space {
+                out.push(' ');
+                pending_space = false;
+            }
+            out.push(c);
+        }
+    }
+    // 末尾の空白も 1 個だけ残す (空白しか無かった場合は " " になる)
+    if pending_space {
+        out.push(' ');
+    }
+    out
 }
 
 #[cfg(test)]
@@ -290,6 +331,50 @@ mod tests {
         let dom = parse("<html><p>a\n   b</p></html>");
         match &dom.children[0].children[0].node_type {
             NodeType::Text(t) => assert_eq!(t, "a b"),
+            _ => panic!("expected text node"),
+        }
+    }
+
+    /// void 要素の一覧に漏れが無いこと。閉じタグを待ってしまうと
+    /// 後続の兄弟要素を子として飲み込んでしまうので、
+    /// 仕様上の全 14 種が兄弟として並ぶことを確認する
+    #[test]
+    fn handles_all_void_elements() {
+        let dom = parse(
+            "<html><area><base><br><col><embed><hr><img><input><link><meta><param>\
+             <source><track><wbr><p>after</p></html>",
+        );
+        let tags: Vec<_> = dom.children.iter().filter_map(|n| n.tag_name()).collect();
+        assert_eq!(
+            tags,
+            vec![
+                "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta",
+                "param", "source", "track", "wbr", "p"
+            ],
+            "void 要素が後続の兄弟を子にしてしまっている"
+        );
+    }
+
+    /// タグの境界にある空白がテキストノードの端に 1 個だけ残ること。
+    /// ここを落とすと単語がくっつき、逆に描画側で補うと余計な空白が入る
+    #[test]
+    fn preserves_boundary_whitespace() {
+        let dom = parse("<html><p>Hello, <strong>world</strong>!</p></html>");
+        let p = &dom.children[0];
+        let text_of = |i: usize| match &p.children[i].node_type {
+            NodeType::Text(t) => t.clone(),
+            _ => panic!("expected text node"),
+        };
+        assert_eq!(text_of(0), "Hello, ", "閉じ側の空白が残る");
+        assert_eq!(text_of(2), "!", "空白が無い側には足さない");
+    }
+
+    /// 空白が無い境界には空白が生まれないこと
+    #[test]
+    fn does_not_invent_whitespace() {
+        let dom = parse("<html><p>foo<strong>bar</strong>baz</p></html>");
+        match &dom.children[0].children[0].node_type {
+            NodeType::Text(t) => assert_eq!(t, "foo"),
             _ => panic!("expected text node"),
         }
     }
