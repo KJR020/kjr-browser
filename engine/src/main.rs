@@ -8,7 +8,7 @@
 //!
 //!   SAMPLE_HTML (テキスト)
 //!        ↓ html::parse()          … パース (文字列 → 構造)
-//!   DOM ツリー          + CSS (UA スタイル + <style> の中身)
+//!   DOM ツリー          + CSS (UA スタイル + `<style>` の中身)
 //!        ↓ style::style_tree()    … セレクタマッチング・カスケード・継承
 //!   スタイルツリー (各ノードに確定済みスタイル)
 //!        ↓ render::render()       … 縦積みレイアウト (Phase 4 で layout.rs に分離予定)
@@ -90,7 +90,7 @@ struct App {
     dom: Node,
     /// ブラウザ内蔵のデフォルトスタイル
     ua_stylesheet: Stylesheet,
-    /// ページが持ち込んだスタイル (<style> の中身)
+    /// ページが持ち込んだスタイル (`<style>` の中身)
     author_stylesheet: Stylesheet,
 }
 
