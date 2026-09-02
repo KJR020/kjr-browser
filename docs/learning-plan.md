@@ -1,5 +1,7 @@
 # 学習計画: kjr-browser
 
+> 実装は [engine/](../engine/) ディレクトリで進行中。
+
 ## 全体像
 
 ブラウザは URL を受け取り、ピクセルを画面に出力するプログラムである。
@@ -34,9 +36,12 @@ Phase 1    Phase 5    Phase 2       Phase 3       Phase 4       Phase 1
 ### 完了条件
 
 - [x] ウィンドウが開く
-- [ ] 背景色を指定して塗りつぶせる
-- [ ] 矩形を任意の位置・サイズ・色で描画できる
-- [ ] テキストを画面に表示できる
+- [x] 背景色を指定して塗りつぶせる
+- [x] 矩形を任意の位置・サイズ・色で描画できる
+- [x] テキストを画面に表示できる (日本語フォントフォールバック付き)
+
+→ ✅ **Phase 1 完了** (engine/src/: main.rs = イベントループ, display_list.rs = 描画コマンド,
+paint.rs = ラスタライズ, text.rs = フォント処理)
 
 ### 参考資料
 
@@ -63,10 +68,14 @@ Phase 1    Phase 5    Phase 2       Phase 3       Phase 4       Phase 1
 
 ### 完了条件
 
-- [ ] `<h1>Hello</h1>` をパースして DOM ノードを生成できる
-- [ ] ネストしたタグ `<div><p>text</p></div>` を正しくツリー化できる
-- [ ] 属性 `<div class="main" id="root">` をパースできる
-- [ ] DOM ツリーから画面に描画できる
+- [x] `<h1>Hello</h1>` をパースして DOM ノードを生成できる
+- [x] ネストしたタグ `<div><p>text</p></div>` を正しくツリー化できる
+- [x] 属性 `<div class="main" id="root">` をパースできる
+- [x] DOM ツリーから画面に描画できる
+
+→ ✅ **Phase 2 完了** (engine/src/: html.rs = 再帰下降パーサ, dom.rs = ツリー定義,
+render.rs = DOM → ディスプレイリスト変換の仮実装。コメント・DOCTYPE・void 要素・
+空白の畳み込みにも対応。起動時に DOM ツリーが標準出力へダンプされる)
 
 ### 参考資料
 
@@ -96,10 +105,16 @@ Phase 1    Phase 5    Phase 2       Phase 3       Phase 4       Phase 1
 
 ### 完了条件
 
-- [ ] `h1 { color: red; }` をパースできる
-- [ ] `.class` `#id` `element` セレクタがマッチする
-- [ ] 詳細度に基づいて競合を解決できる
-- [ ] スタイルが画面描画に反映される
+- [x] `h1 { color: red; }` をパースできる
+- [x] `.class` `#id` `element` セレクタがマッチする
+- [x] 詳細度に基づいて競合を解決できる
+- [x] スタイルが画面描画に反映される
+
+→ ✅ **Phase 3 完了** (engine/src/: css.rs = CSS パーサ + 詳細度、
+style.rs = セレクタマッチング・カスケード・継承・スタイルツリー構築。
+render.rs はタグ名の決め打ちをやめ、確定済みスタイルだけを見るようになった。
+Phase 2 で Rust コードに書いていたデフォルトスタイルは、本物の CSS
+(style.rs の `USER_AGENT_CSS`) に移行。`display: none` にも対応)
 
 ### 参考資料
 
