@@ -169,15 +169,39 @@ impl ApplicationHandler for App {
     }
 }
 
+/// DOM ツリーを標準出力に出す。大きなページでは先頭だけにする
+fn print_dom_summary(dom: &Node) {
+    let dump = dom.dump(0);
+    let lines: Vec<&str> = dump.lines().collect();
+    if lines.len() <= 60 {
+        println!("--- DOM ツリー ---\n{dump}");
+    } else {
+        println!("--- DOM ツリー ({} ノード、先頭 30 行) ---", lines.len());
+        for line in lines.iter().take(30) {
+            println!("{line}");
+        }
+        println!("  ...");
+    }
+}
+
 fn main() {
+    // 引数で HTML ファイルを指定できる (`cargo run -- page.html`)。
+    // 省略時は SAMPLE_HTML を表示する
+    let source = match std::env::args().nth(1) {
+        Some(path) => std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("{path} を読み込めない: {e}")),
+        None => SAMPLE_HTML.to_string(),
+    };
+
     // パース結果の DOM ツリーを標準出力にダンプする。
     // HTML がどう木になったかを目で確認できる (Phase 2 の学習ポイント)
-    let dom = html::parse(SAMPLE_HTML);
-    println!("--- DOM ツリー ---\n{}", dom.dump(0));
+    let dom = html::parse(&source);
+    print_dom_summary(&dom);
 
     // <style> の中身を取り出して、どんな CSS が当たるのか確認する (Phase 3 の学習ポイント)
     let author_css = style::extract_inline_styles(&dom);
-    println!("--- 著者スタイルシート ---{author_css}");
+    println!("--- 著者スタイルシート ({} 文字) ---", author_css.len());
+    println!("{}", &author_css[..author_css.len().min(400)]);
 
     let fonts = FontStack::load_system_fonts().expect("load fonts");
     let event_loop = EventLoop::new().expect("create event loop");
